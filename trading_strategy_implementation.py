@@ -59,47 +59,35 @@ class TradingStrategy:
     def should_open_long(self, indicators: dict) -> bool:
         """롱 포지션 진입 조건 확인"""
         try:
-            # 현재 거래량이 이전 거래량보다 급증했는지 확인
-            volume_surge = indicators['last_volume'] > self.config.volume_threshold
-            
-            # Stoch RSI 조건 확인 (과매도)
-            stoch_rsi_condition = indicators['stoch_k'] < self.config.stoch_rsi_low
-            
-            # 가격이 200 EMA 위에 있는지 확인
-            price_above_ema = indicators['last_close'] > indicators['ema200']
-            
-            # 가격 하락 확인 (이전 캔들과 비교)
-            price_falling = indicators['price_change'] < 0
+            # 모든 값을 float으로 변환하여 비교
+            volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
+            stoch_rsi_condition = float(indicators['stoch_k']) < float(self.config.stoch_rsi_low)
+            price_above_ema = float(indicators['last_close']) > float(indicators['ema200'])
+            price_falling = float(indicators['price_change']) < 0
             
             return (volume_surge and stoch_rsi_condition and 
-                   price_above_ema and price_falling and not self.in_position)
-                   
+                price_above_ema and price_falling and not self.in_position)
+                
         except KeyError as e:
             logger.error(f"Missing indicator: {e}")
             return False
-            
+                
     def should_open_short(self, indicators: dict) -> bool:
         """숏 포지션 진입 조건 확인"""
         try:
-            # 현재 거래량이 이전 거래량보다 급증했는지 확인
-            volume_surge = indicators['last_volume'] > self.config.volume_threshold
-            
-            # Stoch RSI 조건 확인 (과매수)
-            stoch_rsi_condition = indicators['stoch_k'] > self.config.stoch_rsi_high
-            
-            # 가격이 200 EMA 아래에 있는지 확인
-            price_below_ema = indicators['last_close'] < indicators['ema200']
-            
-            # 가격 상승 확인 (이전 캔들과 비교)
-            price_rising = indicators['price_change'] > 0
+            # 모든 값을 float으로 변환하여 비교
+            volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
+            stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_high)
+            price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
+            price_rising = float(indicators['price_change']) > 0
             
             return (volume_surge and stoch_rsi_condition and 
-                   price_below_ema and price_rising and not self.in_position)
-                   
+                price_below_ema and price_rising and not self.in_position)
+                
         except KeyError as e:
             logger.error(f"Missing indicator: {e}")
             return False
-
+        
     async def execute_long_trade(self, current_price: float):
         """롱 포지션 Limit 진입 실행"""
         try:
