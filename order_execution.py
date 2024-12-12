@@ -317,3 +317,63 @@ class OrderExecutor:
         """포지션 상태 업데이트"""
         if is_closed and symbol in self.positions:
             del self.positions[symbol]
+
+    async def execute_market_close(self, position: Position) -> bool:
+        """시장가로 포지션 청산"""
+        try:
+            logger.info(f"시장가 청산 시작: {position.symbol}")
+            
+            # 기존 주문들 취소
+            await self.cancel_all_symbol_orders(position.symbol)
+            
+            # 시장가 청산 주문 실행
+            response = self.api.close_position(position.symbol)
+            
+            if response.get('code') == '00000':
+                logger.info(f"포지션 청산 성공: {position.symbol}")
+                # 포지션 상태 업데이트
+                self.update_position_status(position.symbol, is_closed=True)
+                return True
+            else:
+                logger.error(f"포지션 청산 실패: {response}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"시장가 청산 중 오류 발생: {e}")
+            return False
+
+    async def execute_limit_close(self, position: Position, limit_price: float) -> bool:
+        """지정가로 포지션 청산"""
+        try:
+            logger.info(f"지정가 청산 시작: {position.symbol}, 가격: {limit_price}")
+            
+            # 청산 주문의 방향 설정 (롱 포지션은 매도, 숏 포지션은 매수)
+            side = 'sell' if position.side == 'long' else 'buy'
+            
+            response = self.api.place_order(
+                symbol=position.symbol,
+                side=side,
+                trade_side='close',
+                size=str(position.size),
+                order_type='limit',
+                price=str(limit_price)
+            )
+            
+            if response.get('code') == '00000':
+                order_id = response['data']['orderId']
+                # 주문 체결 대기
+                filled = await self.wait_for_order_fill(position.symbol, order_id)
+                if filled:
+                    logger.info(f"지정가 청산 성공: {position.symbol}")
+                    self.update_position_status(position.symbol, is_closed=True)
+                    return True
+                else:
+                    logger.warning(f"지정가 청산 주문 미체결: {position.symbol}")
+                    return False
+            else:
+                logger.error(f"지정가 청산 주문 실패: {response}")
+                return False
+                
+        except Exception as e:
+            logger.error(f"지정가 청산 중 오류 발생: {e}")
+            return False

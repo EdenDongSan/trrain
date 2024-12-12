@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingConfig:
-    leverage: int = 10
+    leverage: int = 30
     stop_loss_pct: float = 0.2
     take_profit_pct: float = 1.5
     volume_threshold: float = 20.0
@@ -215,14 +215,14 @@ class TradingStrategy:
             
             # ATR 기반 이동폭 계산
             if atr < 100:
-                price_move = atr * 6
-                logger.info(f"ATR < 100, 이동폭 = ATR × 6 = {price_move:.2f}")
+                price_move = atr * 8
+                logger.info(f"ATR < 100, 이동폭 = ATR × 8 = {price_move:.2f}")
             elif atr <= 200:
                 price_move = atr * 4
                 logger.info(f"100 ≤ ATR ≤ 200, 이동폭 = ATR × 4 = {price_move:.2f}")
             else:
-                price_move = atr * 5
-                logger.info(f"ATR > 200, 이동폭 = ATR × 5.0 = {price_move:.2f}")
+                price_move = atr * 3
+                logger.info(f"ATR > 200, 이동폭 = ATR × 3.0 = {price_move:.2f}")
                 
             if position.side == 'long':
                 target_price = entry_price + price_move
