@@ -140,16 +140,47 @@ class BitgetAPI:
         params = {'productType': 'USDT-FUTURES'}
         return await self._request('GET', '/api/v2/mix/account/accounts', params=params)
 
-    async def get_position(self, symbol: str) -> Optional[Position]:            # 얘가 model.py에 있는 position 가져와서 만드는 핵심 position 얻기 함수이다.
+    async def get_position(self, symbol: str) -> Optional[Position]:
         """비동기 포지션 정보 조회"""
-        params = {
-            'symbol': symbol,
-            'marginMode': 'crossed',
-            'productType': 'USDT-FUTURES',
-            'marginCoin': 'USDT'
-        }
+        try:
+            params = {
+                'symbol': symbol,
+                'marginMode': 'crossed',
+                'productType': 'USDT-FUTURES',
+                'marginCoin': 'USDT'
+            }
 
-        response = await self._request('GET', '/api/v2/mix/position/single-position', params=params)
+            response = await self._request('GET', '/api/v2/mix/position/single-position', params=params)
+            
+            if response and response.get('code') == '00000' and response.get('data'):
+                position_data = response['data'][0] if isinstance(response['data'], list) else response['data']
+                
+                if float(position_data.get('total', '0')) > 0:
+                    return Position(
+                        symbol=symbol,
+                        side='long' if position_data.get('holdSide') == 'long' else 'short',
+                        size=float(position_data.get('total', '0')),
+                        entry_price=float(position_data.get('openPriceAvg', '0')),
+                        stop_loss_price=0.0,
+                        take_profit_price=0.0,
+                        timestamp=int(time.time() * 1000),
+                        leverage=int(position_data.get('leverage', '1')),
+                        break_even_price=float(position_data.get('breakEvenPrice', '0')),
+                        unrealized_pl=float(position_data.get('unrealizedPL', '0')),
+                        margin_size=float(position_data.get('marginSize', '0')),
+                        available=float(position_data.get('available', '0')),
+                        locked=float(position_data.get('locked', '0')),
+                        liquidation_price=float(position_data.get('liquidationPrice', '0')),
+                        margin_ratio=float(position_data.get('marginRatio', '0')),
+                        mark_price=float(position_data.get('markPrice', '0')),
+                        achieved_profits=float(position_data.get('achievedProfits', '0')),
+                        total_fee=float(position_data.get('totalFee', '0')),
+                        margin_mode=position_data.get('marginMode', 'crossed')
+                    )
+            return None
+        except Exception as e:
+            logger.error(f"Error fetching position: {e}")
+            return None
         
         if response and response.get('code') == '00000' and response.get('data'):
             position_data = response['data'][0] if isinstance(response['data'], list) else response['data']

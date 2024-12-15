@@ -77,13 +77,25 @@ class TradingStrategy:
             logger.error(f"Missing indicator: {e}")
             return False
 
-    def should_open_short(self, indicators: dict) -> bool:                     #결국 숏숏포지션진입을 하기직전에 호출하는 함수다. 불값으로 true, false를 반환한다.
+    def should_open_short(self, indicators: dict) -> bool:
         """숏 포지션 진입 조건 확인"""
+        logger.info("숏 포지션 진입 조건 확인 시작")  # 함수 시작 확인용 로그
         try:
+            # 디버깅을 위해 indicators 내용 출력
+            logger.info(f"Received indicators: {indicators}")
+            
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
             stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_high)
             price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
-            price_falling = float(indicators['price_change']) < 0          #음봉에 진입하는게 맞는거같다. 양봉에 진입하면 보통 횡보장에서 박스상승에 자주당함.
+            price_falling = float(indicators['price_change']) < 0
+
+            # 상세 조건 로깅
+            logger.info(f"Short Entry Conditions:\n"
+                    f"  Volume ({indicators['last_volume']:.2f} > {self.config.volume_threshold}): {volume_surge}\n"
+                    f"  Stoch RSI K ({indicators['stoch_k']:.2f} > {self.config.stoch_rsi_high}): {stoch_rsi_condition}\n"
+                    f"  Price Below EMA200 ({indicators['last_close']:.2f} < {indicators['ema200']:.2f}): {price_below_ema}\n"
+                    f"  Price Falling ({indicators['price_change']:.2f} < 0): {price_falling}\n"
+                    f"  No Position: {not self.in_position}")
             
             should_enter = (
                 volume_surge and 
@@ -92,12 +104,15 @@ class TradingStrategy:
                 price_falling and 
                 not self.in_position
             )
-                
-            logger.info(f"숏 진입 조건 충족 여부: {should_enter}")
-            return should_enter      # should_enter() 값들이 전부 True가 되어야 True로 반환하는거다. and 조건 연산자 활용.
-                
+            
+            logger.info(f"최종 숏 진입 결정: {should_enter}")
+            return should_enter
+                    
         except KeyError as e:
-            logger.error(f"Missing indicator: {e}")
+            logger.error(f"Missing indicator in should_open_short: {e}\nIndicators received: {indicators}")
+            return False
+        except Exception as e:
+            logger.error(f"Unexpected error in should_open_short: {e}")
             return False
 
     async def execute_long_trade(self, current_price: float):              # 불값으로 true를 받고 비동기로 실행이 된다.
@@ -291,23 +306,23 @@ class TradingStrategy:
         except Exception as e:
             logger.error(f"Error in run method: {e}")
 
-    async def _process_trading_logic(self):         # 얘가 run 태스크로 무한 반복하는 함수. 무한루프함수.
+    async def _process_trading_logic(self):
         """트레이딩 로직 처리"""
         try:
-            # 포지션 상태 확인
-            position = await self.order_executor.get_position("BTCUSDT")   #order_executor에 있는는 함수를 호출한다.
+            # 포지션 상태 확인 (await 추가)
+            position = await self.order_executor.get_position("BTCUSDT")   
             
+            logger.info(f"현재 포지션 상태: {position if position else '포지션 없음'}")
+
             # 이전에 포지션이 있었는데 지금 없다면 수동 청산으로 간주
             if self.in_position and not position:
                 logger.info("포지션이 외부에서 청산됨을 감지")
                 self.in_position = False
                 self.last_trade_time = int(time.time())
-                # 남은 미체결 주문 정리
-                await self.order_executor.cancel_all_symbol_orders("BTCUSDT") #여기서 심볼을 주네..심볼관리는 여기서. 여기서 미체결 주문 관리를 한다. 30초 지난 것들 싹다 삭제. 심플.
+                await self.order_executor.cancel_all_symbol_orders("BTCUSDT")
                 return
             
             # 기술적 지표 계산
-            # 여기서 market_data_manager을 실행시킴. 인디케이터들을 가져온다. (최근n개의 캔들데이터,이전봉대비 가격변동,ema7,25,200,stoch rsi k값d값)
             indicators = self.market_data.calculate_technical_indicators()        
             if not indicators:
                 logger.warning("지표가 계산되지 않음")
@@ -319,20 +334,30 @@ class TradingStrategy:
                 
             current_time = int(time.time())
             
-            if position:
-                # 포지션이 있는 경우 청산조건만! 확인.
-                should_close, close_reason = await self.should_close_position(position, indicators)  # 청산조건호출함수. true, "stop_loss" or "take_profit" 튜플값으로 반환.
+            if position is not None and position.size > 0:  # position은 이미 await 완료됨
+                logger.info(f"포지션 존재. 사이즈: {position.size}, 방향: {position.side}")
+                should_close, close_reason = await self.should_close_position(position, indicators)
                 if should_close:
-                    await self.close_position(position, close_reason) #포지션청산함수.
+                    await self.close_position(position, close_reason)
             else:
-                # 새로운 포지션 진입 평가
+                logger.info("포지션 없음. 신규 진입 조건 확인 중...")
                 if (current_time - self.last_trade_time) >= self.min_trade_interval:
-                    if self.should_open_long(indicators):                 #롱 진입 신호 호출 함수. 불값이다.
+                    logger.info("진입 조건 체크 시작...")
+                    
+                    logger.info("롱 진입 조건 확인 중...")
+                    if self.should_open_long(indicators):
                         logger.info("롱 진입 조건 충족 - 주문 실행")
                         await self.execute_long_trade(current_price)
-                    elif self.should_open_short(indicators):             #숏 진입 신호 호출 함수. 불값이다.
-                        logger.info("숏 진입 조건 충족 - 주문 실행")
-                        await self.execute_short_trade(current_price)
+                    else:
+                        logger.info("숏 진입 조건 확인 중...")
+                        if self.should_open_short(indicators):
+                            logger.info("숏 진입 조건 충족 - 주문 실행")
+                            await self.execute_short_trade(current_price)
+                        else:
+                            logger.info("진입 조건 미충족")
+                else:
+                    wait_time = self.min_trade_interval - (current_time - self.last_trade_time)
+                    logger.info(f"진입 대기 중... (다음 진입까지 {wait_time}초)")
                         
         except Exception as e:
             logger.error(f"Error in trading logic: {e}")

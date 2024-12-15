@@ -243,10 +243,10 @@ class OrderExecutor:
             return False
         
      # 트레이딩스트레테지에서 첫번째로 호출당한다.   
-    async def get_position(self, symbol: str) -> Optional[Position]: # 단순히 data_api의 get_position 함수를 호출하는 메서드. 얘는 그걸 중계하는 역할을 한다. 계층구조,의존성분리를위한것.
+    async def get_position(self, symbol: str) -> Optional[Position]:
         """현재 포지션 상태 조회"""
         try:
-            return self.api.get_position(symbol)
+            return await self.api.get_position(symbol)  # await 추가
         except Exception as e:
             logger.error(f"Error getting position: {e}")
             return None
