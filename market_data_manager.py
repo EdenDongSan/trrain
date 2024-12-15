@@ -140,6 +140,15 @@ class MarketDataManager:
                 'last_volume': df['volume'].iloc[-1],
             }
             
+            # 계산 결과 로깅 추가
+            logger.info(f"Technical Indicators Calculated:\n"
+                        f"  EMA200: {ema200:.2f}\n"
+                        f"  Price Change: {price_change:.2f}\n"
+                        f"  Stoch K: {stoch_k:.2f}\n"
+                        f"  Stoch D: {stoch_d:.2f}\n"
+                        f"  Last Close: {df['close'].iloc[-1]:.2f}\n"
+                        f"  Last Volume: {df['volume'].iloc[-1]:.2f}")
+            
             return result
             
         except Exception as e:
