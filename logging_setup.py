@@ -104,8 +104,8 @@ def setup_logging(log_dir: str = "logs", env_path: Optional[str] = None) -> None
     root_logger.addHandler(trading_handler)
     
     # API 로그 핸들러
-    api_handler = setup_rotating_handler(log_paths['api'], logging.INFO, 'api')
-    api_handler.addFilter(lambda record: 'bitget_api' in record.name.lower())
+    api_handler = setup_rotating_handler(log_paths['api'], logging.ERROR, 'api')  # INFO를 ERROR로 변경
+    api_handler.addFilter(lambda record: 'bitget_api' in record.name.lower() and record.levelno >= logging.ERROR)  # ERROR 이상 레벨만 로깅
     root_logger.addHandler(api_handler)
     
     # WebSocket 로그 핸들러
@@ -115,7 +115,7 @@ def setup_logging(log_dir: str = "logs", env_path: Optional[str] = None) -> None
     
     # API 로거 특별 설정
     api_logger = logging.getLogger('bitget_api')
-    api_logger.propagate = False  # 중복 로깅 방지
+    api_logger.propagate = False
     api_logger.addHandler(api_handler)
     
     # 시작 로그 기록

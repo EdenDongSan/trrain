@@ -29,8 +29,6 @@ class TradingStrategy:
         self.last_volume = 0.0
         self.last_trade_time = 0
         self.min_trade_interval = 60
-        self.position_entry_timeout = 30  # 진입 주문 타임아웃
-        self.position_close_timeout = 20  # 청산 주문 타임아웃
 
     async def calculate_position_size(self, current_price: float) -> float:                 # 숏이나 롱포지션에 주문 넣으려고 할때 초반에 쓰인다.
         """계좌 잔고를 기반으로 포지션 크기 계산"""
@@ -61,19 +59,19 @@ class TradingStrategy:
         try:
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
             stoch_rsi_condition = float(indicators['stoch_k']) < float(self.config.stoch_rsi_low)
-            price_above_ema = float(indicators['last_close']) < float(indicators['ema200'])
-            price_falling = float(indicators['price_change']) < 0
+            price_above_ema = float(indicators['last_close']) > float(indicators['ema200'])
+            price_rising = float(indicators['price_change']) > 0 # 양봉에 진입하는게 맞다고 본다. 음봉에 진입하면 보통 횡보장에서 박스하강에 자주당함.
             
             should_enter = (
                 volume_surge and 
                 stoch_rsi_condition and 
                 price_above_ema and 
-                price_falling and 
+                price_rising and 
                 not self.in_position
             )
                 
             logger.info(f"롱 진입 조건 충족 여부: {should_enter}")
-            return should_enter
+            return should_enter             # should_enter() 값들이 전부 True가 되어야 True로 반환하는거다. and 조건 연산자 활용.
                 
         except KeyError as e:
             logger.error(f"Missing indicator: {e}")
@@ -84,19 +82,19 @@ class TradingStrategy:
         try:
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
             stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_high)
-            price_below_ema = float(indicators['last_close']) > float(indicators['ema200'])
-            price_rising = float(indicators['price_change']) > 0
+            price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
+            price_falling = float(indicators['price_change']) < 0          #음봉에 진입하는게 맞는거같다. 양봉에 진입하면 보통 횡보장에서 박스상승에 자주당함.
             
             should_enter = (
                 volume_surge and 
                 stoch_rsi_condition and 
                 price_below_ema and 
-                price_rising and 
+                price_falling and 
                 not self.in_position
             )
                 
             logger.info(f"숏 진입 조건 충족 여부: {should_enter}")
-            return should_enter
+            return should_enter      # should_enter() 값들이 전부 True가 되어야 True로 반환하는거다. and 조건 연산자 활용.
                 
         except KeyError as e:
             logger.error(f"Missing indicator: {e}")
@@ -171,25 +169,32 @@ class TradingStrategy:
                 order_type='limit',
                 price=str(entry_price)
             )
-            
-            if success:
-                self.in_position = True
+                    # 이부분이 원래는 not이 없었음. 그래서 제대로 주문이 안들어간듯 싶다. not이 없다면... 이미 포지션이 존재한다는 뜻이 아니라 성공해서 포지션이 존재한다는 뜻이되어버림.
+            if not success:
+                logger.error("이미 포지션이 존재하기에 주문실패")
+            else:
+                self.in_position = True # 이렇게 해야만, 성공해서 포지션이 존재하게 됐다는 뜻이 됨.
                 self.last_trade_time = int(time.time())
                 logger.info(f"Successfully placed SHORT limit order at {entry_price}")
-            else:
-                logger.error("Failed to place SHORT position")
                 
         except Exception as e:
-            logger.error(f"Error executing short trade: {e}")
+            logger.error(f"Error executing long trade: {e}")
 
-    async def should_close_position(self, position: Position, indicators: dict) -> Tuple[bool, str]:         # 여기 있는 포지션은 order_exection의 겟포지션에서 받아오게 되어있다.
+    async def should_close_position(self, position: Position, indicators: dict) -> Tuple[bool, str]:
         """                                                                                                  
         포지션 청산 조건 확인
         Returns: (bool, str) - (청산해야 하는지 여부, 청산 이유)
         """
         try:
+            if not isinstance(position, Position):
+                position = await position  # await 추가
+                if not position:  # position이 None인 경우 처리
+                    return False, ""
+                
             current_price = float(indicators['last_close'])
             entry_price = position.entry_price
+            break_even_price = position.break_even_price
+            price_change = float(indicators['price_change'])  # 양봉/음봉 확인용
             
             logger.info(f"포지션 정보: 심볼={position.symbol}, "
                     f"방향={position.side}, "
@@ -199,51 +204,29 @@ class TradingStrategy:
             
             # PNL% 계산
             if position.side == 'long':
-                pnl_percentage = ((current_price - entry_price) / entry_price) * 100
+                pnl_percentage = ((current_price - break_even_price) / entry_price) * 100
             else:
-                pnl_percentage = ((entry_price - current_price) / entry_price) * 100
+                pnl_percentage = ((break_even_price - current_price) / entry_price) * 100
                 
             logger.info(f"현재 PNL%: {pnl_percentage:.2f}%")
             
-            # 손절 조건 (-0.2% 이하)
-            if pnl_percentage <= -0.2:
+            # 손절 조건 (-0.3% 이하)
+            if pnl_percentage <= -0.3:
                 logger.info(f"손절 조건 충족: PNL = {pnl_percentage:.2f}%")
                 return True, "stop_loss"
             
-            # ATR 기반 이익실현 조건 체크
-            atr = self.market_data.calculate_atr(period=14)
-            logger.info(f"현재 ATR: {atr:.2f}")
-            
-            # ATR 기반 이동폭 계산
-            if atr < 100:
-                price_move = atr * 8
-                logger.info(f"ATR < 100, 이동폭 = ATR × 8 = {price_move:.2f}")
-            elif atr <= 200:
-                price_move = atr * 4
-                logger.info(f"100 ≤ ATR ≤ 200, 이동폭 = ATR × 4 = {price_move:.2f}")
-            else:
-                price_move = atr * 3
-                logger.info(f"ATR > 200, 이동폭 = ATR × 3.0 = {price_move:.2f}")
-                
+            # 새로운 익절 조건
             if position.side == 'long':
-                target_price = entry_price + price_move
-                should_close = current_price >= target_price
-                logger.info(f"롱 포지션 상태: "
-                        f"진입가={entry_price:.2f}, "
-                        f"목표가={target_price:.2f}, "
-                        f"현재가={current_price:.2f}, "
-                        f"청산조건={'충족' if should_close else '미충족'}")
+                # 롱 포지션: 음봉이면서 수익률 0.45% 이상
+                should_close = price_change < 0 and pnl_percentage >= 0.45
+                
                 if should_close:
                     return True, "take_profit"
                     
             else:
-                target_price = entry_price - price_move
-                should_close = current_price <= target_price
-                logger.info(f"숏 포지션 상태: "
-                        f"진입가={entry_price:.2f}, "
-                        f"목표가={target_price:.2f}, "
-                        f"현재가={current_price:.2f}, "
-                        f"청산조건={'충족' if should_close else '미충족'}")
+                # 숏 포지션: 양봉이면서 수익률 0.45% 이상
+                should_close = price_change > 0 and pnl_percentage >= 0.45
+                
                 if should_close:
                     return True, "take_profit"
             
@@ -312,7 +295,7 @@ class TradingStrategy:
         """트레이딩 로직 처리"""
         try:
             # 포지션 상태 확인
-            position = self.order_executor.get_position("BTCUSDT")   #order_executor에 있는는 함수를 호출한다.
+            position = await self.order_executor.get_position("BTCUSDT")   #order_executor에 있는는 함수를 호출한다.
             
             # 이전에 포지션이 있었는데 지금 없다면 수동 청산으로 간주
             if self.in_position and not position:
