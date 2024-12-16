@@ -155,61 +155,48 @@ class BitgetAPI:
             if response and response.get('code') == '00000' and response.get('data'):
                 position_data = response['data'][0] if isinstance(response['data'], list) else response['data']
                 
-                if float(position_data.get('total', '0')) > 0:
+                # 안전한 float 변환을 위한 함수
+                def safe_float(value, default=0.0):
+                    if value is None or value == '':
+                        return default
+                    try:
+                        return float(value)
+                    except (ValueError, TypeError):
+                        return default
+
+                # 포지션 크기 확인
+                total = safe_float(position_data.get('total'))
+                
+                if total > 0:
                     return Position(
                         symbol=symbol,
                         side='long' if position_data.get('holdSide') == 'long' else 'short',
-                        size=float(position_data.get('total', '0')),
-                        entry_price=float(position_data.get('openPriceAvg', '0')),
+                        size=total,
+                        entry_price=safe_float(position_data.get('openPriceAvg')),
                         stop_loss_price=0.0,
                         take_profit_price=0.0,
                         timestamp=int(time.time() * 1000),
-                        leverage=int(position_data.get('leverage', '1')),
-                        break_even_price=float(position_data.get('breakEvenPrice', '0')),
-                        unrealized_pl=float(position_data.get('unrealizedPL', '0')),
-                        margin_size=float(position_data.get('marginSize', '0')),
-                        available=float(position_data.get('available', '0')),
-                        locked=float(position_data.get('locked', '0')),
-                        liquidation_price=float(position_data.get('liquidationPrice', '0')),
-                        margin_ratio=float(position_data.get('marginRatio', '0')),
-                        mark_price=float(position_data.get('markPrice', '0')),
-                        achieved_profits=float(position_data.get('achievedProfits', '0')),
-                        total_fee=float(position_data.get('totalFee', '0')),
+                        leverage=int(safe_float(position_data.get('leverage'), 1)),
+                        break_even_price=safe_float(position_data.get('breakEvenPrice')),
+                        unrealized_pl=safe_float(position_data.get('unrealizedPL')),
+                        margin_size=safe_float(position_data.get('marginSize')),
+                        available=safe_float(position_data.get('available')),
+                        locked=safe_float(position_data.get('locked')),
+                        liquidation_price=safe_float(position_data.get('liquidationPrice')),
+                        margin_ratio=safe_float(position_data.get('marginRatio')),
+                        mark_price=safe_float(position_data.get('markPrice')),
+                        achieved_profits=safe_float(position_data.get('achievedProfits')),
+                        total_fee=safe_float(position_data.get('totalFee')),
                         margin_mode=position_data.get('marginMode', 'crossed')
                     )
+                    
+            # 디버깅을 위한 로그 추가
+            logger.info(f"Position API Response: {response}")
             return None
+            
         except Exception as e:
             logger.error(f"Error fetching position: {e}")
             return None
-        
-        if response and response.get('code') == '00000' and response.get('data'):
-            position_data = response['data'][0] if isinstance(response['data'], list) else response['data']
-            
-            if float(position_data.get('total', '0')) > 0:
-                return Position(
-                    symbol=symbol,
-                    side='long' if position_data.get('holdSide') == 'long' else 'short',
-                    size=float(position_data.get('total', '0')),
-                    entry_price=float(position_data.get('openPriceAvg', '0')),
-                    stop_loss_price=0.0,  # API에서 제공하지 않음
-                    take_profit_price=0.0,  # API에서 제공하지 않음
-                    timestamp=int(time.time() * 1000),
-                    leverage=int(position_data.get('leverage', '1')),
-                    
-                    # 새로 추가된 필드들
-                    break_even_price=float(position_data.get('breakEvenPrice', '0')),
-                    unrealized_pl=float(position_data.get('unrealizedPL', '0')),
-                    margin_size=float(position_data.get('marginSize', '0')),
-                    available=float(position_data.get('available', '0')),
-                    locked=float(position_data.get('locked', '0')),
-                    liquidation_price=float(position_data.get('liquidationPrice', '0')),
-                    margin_ratio=float(position_data.get('marginRatio', '0')),
-                    mark_price=float(position_data.get('markPrice', '0')),
-                    achieved_profits=float(position_data.get('achievedProfits', '0')),
-                    total_fee=float(position_data.get('totalFee', '0')),
-                    margin_mode=position_data.get('marginMode', 'crossed')
-                )
-        return None
 
     async def place_order(self, symbol: str, side: str, trade_side: str,            # order_exectuion에 open_position 함수에서 호출하는 함수. 실제 주문api 전송을 담당한다.
                          size: str, margin_coin: str = 'USDT', 
@@ -274,11 +261,12 @@ class BitgetAPI:
 
         return await self._request('POST', '/api/v2/mix/order/close-positions', data=body)
 
-    async def get_order_detail(self, symbol: str, order_id: str) -> dict:      # wait_for_order_fill 함수에서 쓰인다. order_execution.
+    async def get_order_detail(self, symbol: str, order_id: str) -> dict:
         """비동기 주문 상태 조회"""
         params = {
-            'symbol': symbol,
-            'orderId': order_id
+            'symbol': symbol.upper(),  # API 요구사항: 대문자여야 함
+            'orderId': order_id,
+            'productType': 'USDT-FUTURES'  # 필수 파라미터 추가 api 문서 참조해서 수정.
         }
         return await self._request('GET', '/api/v2/mix/order/detail', params=params)
 

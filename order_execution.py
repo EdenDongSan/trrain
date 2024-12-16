@@ -34,7 +34,7 @@ class OrderExecutor:
         
         while time.time() - start_time < timeout:
             try:
-                response = self.api.get_order_detail(symbol, order_id)  # 와 여기서 쓰인다.
+                response = await self.api.get_order_detail(symbol, order_id)  # 와 여기서 쓰인다.
                 
                 if response.get('code') == '00000':
                     status = response['data']['state']
@@ -82,7 +82,7 @@ class OrderExecutor:
     async def cancel_all_symbol_orders(self, symbol: str) -> bool:              # trading_strategy 메인 무한루프 함수의 시작점 부근에서 호출된다. 실제 포지션 진입함수를 실행할때 처음에도 쓰인다. 자주호출된다.
         """특정 심볼의 모든 미체결 주문 취소"""
         try:
-            cancel_results = self.api.cancel_all_pending_orders(symbol)          #api주문을 호출시킨다.
+            cancel_results = await self.api.cancel_all_pending_orders(symbol)          #api주문을 호출시킨다.
             success = all(result.get('code') == '00000' for result in cancel_results)
             
             if success:
@@ -108,7 +108,7 @@ class OrderExecutor:
                        order_type: str = 'limit', price: str = None) -> bool:
         """포지션 오픈"""
         try:
-            position = self.api.get_position(symbol)         #포지션 있는지 api 호출해서 있으면 false 반환해버린다.
+            position = await self.api.get_position(symbol)         #포지션 있는지 api 호출해서 있으면 false 반환해버린다.
             if position:
                 logger.warning(f"Position already exists for {symbol}")
                 return False
@@ -265,7 +265,7 @@ class OrderExecutor:
             await self.cancel_all_symbol_orders(position.symbol)
             
             # 시장가 청산 주문 실행
-            response = self.api.close_position(position.symbol)
+            response = await self.api.close_position(position.symbol)
             
             if response.get('code') == '00000':
                 logger.info(f"포지션 청산 성공: {position.symbol}")

@@ -30,26 +30,28 @@ class TradingStrategy:
         self.last_trade_time = 0
         self.min_trade_interval = 60
 
-    async def calculate_position_size(self, current_price: float) -> float:                 # 숏이나 롱포지션에 주문 넣으려고 할때 초반에 쓰인다.
+    async def calculate_position_size(self, current_price: float) -> float:
         """계좌 잔고를 기반으로 포지션 크기 계산"""
         try:
-            account_info = self.order_executor.api.get_account_balance()                #api로 계좌잔고정보를 호출하는 부분이다.
+            account_info = await self.order_executor.api.get_account_balance()
             logger.info(f"Account info received: {account_info}")
             
             if account_info.get('code') != '00000':
                 logger.error(f"Failed to get account balance: {account_info}")
                 return 0.0
             
-            available_balance = float(account_info['data']['available'])             #계좌잔고 정보를 변수로 설정한다.
+            # data 필드의 첫 번째 항목에서 available 값을 가져옴 - api문서 accounts 기반 수정.
+            account_data = account_info.get('data', [])[0]
+            available_balance = float(account_data.get('available', '0'))
             logger.info(f"Available balance: {available_balance}")
             
-            trade_amount = available_balance * (self.config.position_size_pct / 100)           #이건 컨피그로 어느정도의 사이즈로 진입할지 결정하는 부분이다. 계좌잔고 변수. 기반 퍼센트.
+            trade_amount = available_balance * (self.config.position_size_pct / 100)
             position_size = (trade_amount * self.config.leverage) / current_price
-            floor_size = math.floor(position_size * 1000) / 1000                #포지션사이즈를 bitget양식에 맞춰서 소수점 셋째자리까지 관리해주는 부분이다. math라이브러리사용.
+            floor_size = math.floor(position_size * 1000) / 1000
             
             logger.info(f"Original size: {position_size}, Floor size: {floor_size}")
             return floor_size
-            
+                
         except Exception as e:
             logger.error(f"Error calculating position size: {e}")
             return 0.0
