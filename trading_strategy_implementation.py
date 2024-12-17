@@ -18,7 +18,7 @@ class TradingConfig:
     volume_threshold: float = 20.0
     stoch_rsi_high: float = 90.0
     stoch_rsi_low: float = 10.0
-    position_size_pct: float = 100.0
+    position_size_pct: float = 98.0 # 혹시나 모르는 미연의 포지션 사이즈 계산 실수를 방지하기 위함. 100이면 100전부 사용한다는 뜻. 계좌잔고의.
 
 class TradingStrategy:
     def __init__(self, market_data: MarketDataManager, order_executor: OrderExecutor):

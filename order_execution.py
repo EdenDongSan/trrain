@@ -288,7 +288,7 @@ class OrderExecutor:
             # 청산 주문의 방향 설정 (숏 포지션은 매도도, 롱 포지션은 매수)
             side = 'sell' if position.side == 'short' else 'buy'
             
-            response = self.api.place_order(
+            response = await self.api.place_order(           # await 추가수정.
                 symbol=position.symbol,
                 side=side,
                 trade_side='close',

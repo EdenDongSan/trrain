@@ -77,7 +77,7 @@ class MarketDataManager:
         """EMA 계산"""
         return df['close'].ewm(span=period, adjust=False).mean()
 
-    def calculate_stoch_rsi(self, period: int = 14, smoothk: int = 3, smoothd: int = 3) -> Tuple[float, float]:
+    def calculate_stoch_rsi(self, period: int = 42, smoothk: int = 3, smoothd: int = 3) -> Tuple[float, float]:
         """Stochastic RSI 계산"""
         try:
             df = self.get_price_data_as_df(lookback=period*3)
