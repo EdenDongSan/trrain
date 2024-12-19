@@ -274,7 +274,8 @@ class BitgetAPI:
         """비동기 주문 취소"""
         body = {
             "symbol": symbol,
-            "orderId": order_id
+            "orderId": order_id,
+            "productType": "USDT-FUTURES"  # 문자열로 처리 
         }
         return await self._request('POST', '/api/v2/mix/order/cancel-order', data=body)
 
