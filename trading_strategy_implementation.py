@@ -28,7 +28,7 @@ class TradingStrategy:
         self.in_position = False
         self.last_volume = 0.0
         self.last_trade_time = 0
-        self.min_trade_interval = 60
+        self.min_trade_interval = 120
 
     async def calculate_position_size(self, current_price: float) -> float:
         """계좌 잔고를 기반으로 포지션 크기 계산"""
