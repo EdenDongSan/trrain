@@ -206,19 +206,9 @@ class MarketDataManager:
             # 캐시 크기 관리 (1시간치 데이터만 유지)
             while len(self.position_ratio_cache) > 60:
                 self.position_ratio_cache.pop(0)
-                
+
     def calculate_position_ratio_indicators(self) -> Dict[str, float]:
-        """포지션 비율 관련 지표 계산
-        
-        Returns:
-            Dict[str, float]: {
-                'long_ratio': 현재 롱 포지션 비율,
-                'short_ratio': 현재 숏 포지션 비율,
-                'long_short_ratio': 현재 롱숏 비율,
-                'ratio_change_5m': 5분 전 대비 롱숏 비율 변화,
-                'ratio_change_15m': 15분 전 대비 롱숏 비율 변화
-            }
-        """
+        """포지션 비율 관련 지표 계산"""
         if not self.position_ratio_cache:
             return {
                 'long_ratio': 0.5,
