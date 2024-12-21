@@ -18,7 +18,7 @@ class TradingConfig:
     volume_threshold: float = 20.0
     stoch_rsi_high: float = 90.0
     stoch_rsi_low: float = 10.0
-    position_size_pct: float = 95.0  # 계좌잔고의 사용 비율
+    position_size_pct: float = 95.0
 
 class TradingStrategy:
     def __init__(self, market_data: MarketDataManager, order_executor: OrderExecutor):
@@ -30,11 +30,13 @@ class TradingStrategy:
         self.last_trade_time = 0
         self.min_trade_interval = 120
         
-        # 포지션 비율 관련 변수 초기화
-        self.entry_position_ratio = 0.0  # 진입 시점의 포지션 비율
-        self.ratio_drop_threshold = 0.01  # 비율 하락 감지 임계값
-        self.ratio_drop_value = 0.0 # 비율 하락으로 인한 청산 시점의 비율
-        self.ratio_drop_direction = None  # 비율 하락이 발생한 포지션 방향
+        # 롱/숏 진입 시점의 비율과 제한 관련 변수들
+        self.long_entry_ratio = 0.0   # 롱 진입 시점의 롱 계좌 비율
+        self.short_entry_ratio = 0.0  # 숏 진입 시점의 숏 계좌 비율
+        self.long_ratio_lock = False  # 롱 진입 제한 플래그
+        self.short_ratio_lock = False # 숏 진입 제한 플래그
+        self.last_price_above_ema = True  # 롱을 위한 EMA 트래킹
+        self.last_price_below_ema = True  # 숏을 위한 EMA 트래킹
 
     async def calculate_position_size(self, current_price: float) -> float:
         """계좌 잔고를 기반으로 포지션 크기 계산"""
@@ -61,41 +63,40 @@ class TradingStrategy:
             logger.error(f"Error calculating position size: {e}")
             return 0.0
 
-    def check_ratio_recovery(self, indicators: dict) -> bool:
-        """비율 하락으로 인한 청산 후 회복 여부 확인"""
-        try:
-            if not self.ratio_drop_value or not self.ratio_drop_direction:
-                return True
-                
-            # 현재 비율 가져오기
-            if self.ratio_drop_direction == 'long':
-                current_ratio = indicators.get('long_ratio', 0)
-            else:
-                current_ratio = indicators.get('short_ratio', 0)
-                
-            # 비율이 하락 시점 대비 0.01% 이상 회복되었는지 확인
-            recovered = current_ratio >= (self.ratio_drop_value + 0.01)
-            
-            if recovered:
-                # 회복 확인되면 관련 변수들 초기화
-                self.ratio_drop_value = 0.0
-                self.ratio_drop_direction = None
-                logger.info(f"포지션 비율 회복 확인: {current_ratio}%")
-                
-            return recovered
-            
-        except Exception as e:
-            logger.error(f"비율 회복 확인 중 에러: {e}")
-            return True  # 에러 발생 시 안전하게 True 반환
-
     def should_open_long(self, indicators: dict) -> bool:
         """롱 포지션 진입 조건 확인"""
         try:
-            # 비율 하락으로 인한 청산 후 회복 여부 체크
-            if self.ratio_drop_direction == 'long' and not self.check_ratio_recovery(indicators):
-                logger.info("롱 포지션 비율 미회복으로 진입 제한")
+            # 현재 가격과 EMA 관계 확인
+            current_price = float(indicators['last_close'])
+            ema200 = float(indicators['ema200'])
+            price_above_ema = current_price > ema200
+
+            # 가격이 EMA를 하향 돌파했는지 확인
+            if not price_above_ema and self.last_price_above_ema:
+                # EMA 하향 돌파 시 롱 진입 제한 해제
+                self.long_ratio_lock = False
+                self.long_entry_ratio = 0.0  # 비율도 초기화
+                logger.info("가격이 200 EMA 하향 돌파. 롱 진입 제한 해제됨")
+
+            self.last_price_above_ema = price_above_ema
+
+            # 현재 롱 비율 확인
+            position_ratios = self.market_data.calculate_position_ratio_indicators()
+            current_long_ratio = float(position_ratios.get('long_ratio', 0))
+
+            # 이전 진입 시점 비율보다 현재 비율이 낮으면 진입 제한
+            if self.long_entry_ratio > 0 and current_long_ratio < self.long_entry_ratio:
+                self.long_ratio_lock = True
+                logger.info(f"전체 롱 비율이 진입 시점({self.long_entry_ratio}%)보다 낮음({current_long_ratio}%). "
+                          f"200 EMA 하향 돌파까지 진입 제한")
                 return False
 
+            # 진입 제한 상태 체크
+            if self.long_ratio_lock:
+                logger.info("롱 진입 제한 상태 (200 EMA 하향 돌파 대기)")
+                return False
+
+            # 기존 진입 조건들
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
             stoch_rsi_condition = float(indicators['stoch_k']) < float(self.config.stoch_rsi_low)
             price_above_ema = float(indicators['last_close']) > float(indicators['ema200'])
@@ -114,8 +115,7 @@ class TradingStrategy:
                      f"  Stoch RSI K ({indicators['stoch_k']:.2f} < {self.config.stoch_rsi_low}): {stoch_rsi_condition}\n"
                      f"  Price Above EMA200 ({indicators['last_close']:.2f} > {indicators['ema200']:.2f}): {price_above_ema}\n"
                      f"  Price Rising ({indicators['price_change']:.2f} > 0): {price_rising}\n"
-                     f"  No Position: {not self.in_position}\n"
-                     f"  Ratio Lock: {self.ratio_drop_direction != 'long'}")
+                     f"  No Position: {not self.in_position}")
                 
             return should_enter
                 
@@ -128,26 +128,43 @@ class TradingStrategy:
 
     def should_open_short(self, indicators: dict) -> bool:
         """숏 포지션 진입 조건 확인"""
-        logger.info("숏 포지션 진입 조건 확인 시작")
         try:
-            # 비율 하락으로 인한 청산 후 회복 여부 체크
-            if self.ratio_drop_direction == 'short' and not self.check_ratio_recovery(indicators):
-                logger.info("숏 포지션 비율 미회복으로 진입 제한")
+            # 현재 가격과 EMA 관계 확인
+            current_price = float(indicators['last_close'])
+            ema200 = float(indicators['ema200'])
+            price_below_ema = current_price < ema200
+
+            # 가격이 EMA를 상향 돌파했는지 확인
+            if not price_below_ema and self.last_price_below_ema:
+                # EMA 상향 돌파 시 숏 진입 제한 해제
+                self.short_ratio_lock = False
+                self.short_entry_ratio = 0.0  # 비율도 초기화
+                logger.info("가격이 200 EMA 상향 돌파. 숏 진입 제한 해제됨")
+
+            self.last_price_below_ema = price_below_ema
+
+            # 현재 숏 비율 확인
+            position_ratios = self.market_data.calculate_position_ratio_indicators()
+            current_short_ratio = float(position_ratios.get('short_ratio', 0))
+
+            # 이전 진입 시점 비율보다 현재 비율이 낮으면 진입 제한
+            if self.short_entry_ratio > 0 and current_short_ratio < self.short_entry_ratio:
+                self.short_ratio_lock = True
+                logger.info(f"전체 숏 비율이 진입 시점({self.short_entry_ratio}%)보다 낮음({current_short_ratio}%). "
+                          f"200 EMA 상향 돌파까지 진입 제한")
                 return False
 
+            # 진입 제한 상태 체크
+            if self.short_ratio_lock:
+                logger.info("숏 진입 제한 상태 (200 EMA 상향 돌파 대기)")
+                return False
+
+            # 기존 진입 조건들
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
             stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_high)
             price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
             price_falling = float(indicators['price_change']) < 0
 
-            logger.info(f"Short Entry Conditions:\n"
-                    f"  Volume ({indicators['last_volume']:.2f} > {self.config.volume_threshold}): {volume_surge}\n"
-                    f"  Stoch RSI K ({indicators['stoch_k']:.2f} > {self.config.stoch_rsi_high}): {stoch_rsi_condition}\n"
-                    f"  Price Below EMA200 ({indicators['last_close']:.2f} < {indicators['ema200']:.2f}): {price_below_ema}\n"
-                    f"  Price Falling ({indicators['price_change']:.2f} < 0): {price_falling}\n"
-                    f"  No Position: {not self.in_position}\n"
-                    f"  Ratio Lock: {self.ratio_drop_direction != 'short'}")
-            
             should_enter = (
                 volume_surge and 
                 stoch_rsi_condition and 
@@ -155,6 +172,13 @@ class TradingStrategy:
                 price_falling and 
                 not self.in_position
             )
+
+            logger.info(f"Short Entry Conditions:\n"
+                    f"  Volume ({indicators['last_volume']:.2f} > {self.config.volume_threshold}): {volume_surge}\n"
+                    f"  Stoch RSI K ({indicators['stoch_k']:.2f} > {self.config.stoch_rsi_high}): {stoch_rsi_condition}\n"
+                    f"  Price Below EMA200 ({indicators['last_close']:.2f} < {indicators['ema200']:.2f}): {price_below_ema}\n"
+                    f"  Price Falling ({indicators['price_change']:.2f} < 0): {price_falling}\n"
+                    f"  No Position: {not self.in_position}")
             
             return should_enter
                     
@@ -170,10 +194,10 @@ class TradingStrategy:
         try:
             await self.order_executor.cancel_all_symbol_orders("BTCUSDT")
 
-            # 현재 롱 비율 저장
+            # 진입 시점의 롱 계좌 비율 저장
             position_ratios = self.market_data.calculate_position_ratio_indicators()
-            self.entry_position_ratio = float(position_ratios.get('long_ratio', 0))
-            logger.info(f"저장된 진입 시점 롱 비율: {self.entry_position_ratio}%")
+            self.long_entry_ratio = float(position_ratios.get('long_ratio', 0))
+            logger.info(f"롱 진입 시점의 전체 롱 비율: {self.long_entry_ratio}%")
             
             size = await self.calculate_position_size(current_price) 
             if size == 0:
@@ -199,8 +223,8 @@ class TradingStrategy:
             )
 
             if not success:
-                logger.error("이미 포지션이 존재하기에 주문실패")
-                self.entry_position_ratio = 0.0
+                logger.error("이미 포지션이 존재하거나 주문 실패")
+                self.long_entry_ratio = 0.0
             else:
                 self.in_position = True
                 self.last_trade_time = int(time.time())
@@ -208,17 +232,17 @@ class TradingStrategy:
                 
         except Exception as e:
             logger.error(f"Error executing long trade: {e}")
-            self.entry_position_ratio = 0.0
+            self.long_entry_ratio = 0.0
 
     async def execute_short_trade(self, current_price: float):
         """숏 포지션 Limit 진입 실행"""
         try:
             await self.order_executor.cancel_all_symbol_orders("BTCUSDT")
 
-            # 현재 숏 비율 저장
+            # 진입 시점의 숏 계좌 비율 저장
             position_ratios = self.market_data.calculate_position_ratio_indicators()
-            self.entry_position_ratio = float(position_ratios.get('short_ratio', 0))
-            logger.info(f"저장된 진입 시점 숏 비율: {self.entry_position_ratio}%")
+            self.short_entry_ratio = float(position_ratios.get('short_ratio', 0))
+            logger.info(f"숏 진입 시점의 전체 숏 비율: {self.short_entry_ratio}%")
             
             size = await self.calculate_position_size(current_price)
             if size == 0:
@@ -244,8 +268,8 @@ class TradingStrategy:
             )
 
             if not success:
-                logger.error("이미 포지션이 존재하기에 주문실패")
-                self.entry_position_ratio = 0.0
+                logger.error("이미 포지션이 존재하거나 주문 실패")
+                self.short_entry_ratio = 0.0
             else:
                 self.in_position = True
                 self.last_trade_time = int(time.time())
@@ -253,7 +277,7 @@ class TradingStrategy:
                 
         except Exception as e:
             logger.error(f"Error executing short trade: {e}")
-            self.entry_position_ratio = 0.0
+            self.short_entry_ratio = 0.0
 
     async def should_close_position(self, position: Position, indicators: dict) -> Tuple[bool, str]:
         """포지션 청산 조건 확인"""
@@ -273,22 +297,6 @@ class TradingStrategy:
                     f"크기={position.size}, "
                     f"진입가={position.entry_price}, "
                     f"레버리지={position.leverage}")
-            
-            # 포지션 비율 확인
-            position_ratios = self.market_data.calculate_position_ratio_indicators()
-            
-            # 롱/숏 포지션 비율이 진입 시점 대비 0.01% 이상 하락했는지 확인
-            if position.side == 'long' and self.entry_position_ratio > 0:
-                current_ratio = float(position_ratios.get('long_ratio', 0))
-                if current_ratio < (self.entry_position_ratio - self.ratio_drop_threshold):
-                    logger.info(f"롱 포지션 비율 하락 감지 (진입: {self.entry_position_ratio}% -> 현재: {current_ratio}%)")
-                    return True, "ratio_drop"
-                    
-            elif position.side == 'short' and self.entry_position_ratio > 0:
-                current_ratio = float(position_ratios.get('short_ratio', 0))
-                if current_ratio < (self.entry_position_ratio - self.ratio_drop_threshold):
-                    logger.info(f"숏 포지션 비율 하락 감지 (진입: {self.entry_position_ratio}% -> 현재: {current_ratio}%)")
-                    return True, "ratio_drop"
             
             # PNL% 계산
             if position.side == 'long':
@@ -327,23 +335,13 @@ class TradingStrategy:
     async def close_position(self, position: Position, reason: str = ""):
         """포지션 청산"""
         try:
-            # ratio_drop인 경우 청산 시점의 비율 저장
-            if reason == "ratio_drop":
-                position_ratios = self.market_data.calculate_position_ratio_indicators()
-                if position.side == 'long':
-                    self.ratio_drop_value = position_ratios['long_ratio']
-                else:
-                    self.ratio_drop_value = position_ratios['short_ratio']
-                self.ratio_drop_direction = position.side
-                logger.info(f"비율 하락으로 인한 청산 시작: {position.side}, 하락 비율: {self.ratio_drop_value}%")
-
             # 기존 미체결 주문들 취소
             await self.order_executor.cancel_all_symbol_orders("BTCUSDT")
             
             logger.info(f"Attempting to close position for reason: {reason}")
             
-            # 시장가 청산 시도 (손절 또는 비율 하락인 경우)
-            if reason in ["stop_loss", "ratio_drop"]:
+            # 시장가 청산 시도 (손절인 경우)
+            if reason == "stop_loss":
                 close_success = await self.order_executor.execute_market_close(position)
                 if close_success:
                     logger.info(f"Position closed with market order ({reason})")
@@ -421,8 +419,8 @@ class TradingStrategy:
                 f"  숏 비율: {position_ratios.get('short_ratio', 0):.2f}%\n"
                 f"  롱숏 비율: {position_ratios.get('long_short_ratio', 1):.2f}\n"
                 f"  5분 변화: {position_ratios.get('ratio_change_5m', 0):.2f}\n"
-                f"  진입 비율: {self.entry_position_ratio:.2f}%\n"
-                f"  하락 임계값: {self.ratio_drop_threshold:.2f}%"
+                f"  롱 진입 비율: {self.long_entry_ratio:.2f}%\n"
+                f"  숏 진입 비율: {self.short_entry_ratio:.2f}%"
             )
                 
             current_price = indicators.get('last_close')
