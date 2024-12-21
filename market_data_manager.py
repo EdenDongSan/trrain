@@ -4,6 +4,7 @@ import logging
 from typing import List, Dict, Optional, Tuple
 from database_manager import DatabaseManager, Candle
 from data_api import BitgetAPI
+from time import time
 
 logger = logging.getLogger(__name__)
 
@@ -13,6 +14,9 @@ class MarketDataManager:
         self.db_manager = DatabaseManager()
         self.latest_candle: Optional[Candle] = None
         self.candles_cache: Dict[int, Candle] = {}
+        self.position_ratio_cache: List[Tuple[int, Dict[str, float]]] = []  # [(timestamp, ratios), ...]
+        self.ratio_update_interval = 60  # 1분마다 업데이트
+        self.last_ratio_update = 0
 
     async def initialize(self):
         """비동기 초기화"""
@@ -72,7 +76,6 @@ class MarketDataManager:
         df['datetime'] = pd.to_datetime(df['timestamp'], unit='ms')
         return df.sort_values('timestamp')
 
-    # 기술적 지표 계산 메서드들은 그대로 유지
     def calculate_ema(self, df: pd.DataFrame, period: int) -> pd.Series:
         """EMA 계산"""
         return df['close'].ewm(span=period, adjust=False).mean()
@@ -122,13 +125,16 @@ class MarketDataManager:
                 logger.warning(f"Insufficient data: {len(df)} < {lookback}")
                 return {}
 
-            # 지표 계산
+            # 기존 지표 계산
             ema7 = self.calculate_ema(df, 7).iloc[-1]
             ema25 = self.calculate_ema(df, 25).iloc[-1]
             ema200 = self.calculate_ema(df, 200).iloc[-1]
             price_change = df['close'].diff().iloc[-1]
             stoch_k, stoch_d = self.calculate_stoch_rsi()
 
+            # 포지션 비율 지표 추가
+            position_ratios = self.calculate_position_ratio_indicators()
+            
             result = {
                 'ema7': ema7,
                 'ema25': ema25,
@@ -138,23 +144,31 @@ class MarketDataManager:
                 'stoch_d': stoch_d,
                 'last_close': df['close'].iloc[-1],
                 'last_volume': df['volume'].iloc[-1],
+                # 포지션 비율 지표 추가
+                'long_ratio': position_ratios.get('long_ratio', 50.0),
+                'short_ratio': position_ratios.get('short_ratio', 50.0),
+                'long_short_ratio': position_ratios.get('long_short_ratio', 1.0),
+                'ratio_change_5m': position_ratios.get('ratio_change_5m', 0.0),
+                'ratio_change_15m': position_ratios.get('ratio_change_15m', 0.0)
             }
             
-            # 계산 결과 로깅 추가
             logger.info(f"Technical Indicators Calculated:\n"
                         f"  EMA200: {ema200:.2f}\n"
                         f"  Price Change: {price_change:.2f}\n"
                         f"  Stoch K: {stoch_k:.2f}\n"
                         f"  Stoch D: {stoch_d:.2f}\n"
                         f"  Last Close: {df['close'].iloc[-1]:.2f}\n"
-                        f"  Last Volume: {df['volume'].iloc[-1]:.2f}")
+                        f"  Last Volume: {df['volume'].iloc[-1]:.2f}\n"
+                        f"  Long Ratio: {result['long_ratio']:.2f}%\n"
+                        f"  Short Ratio: {result['short_ratio']:.2f}%\n"
+                        f"  Long/Short Ratio: {result['long_short_ratio']:.2f}")
             
             return result
             
         except Exception as e:
             logger.error(f"Error calculating indicators: {e}")
             return {}
-
+        
     def calculate_atr(self, period: int = 14) -> float:
         """ATR 계산"""
         try:
@@ -175,3 +189,59 @@ class MarketDataManager:
         except Exception as e:
             logger.error(f"Error calculating ATR: {e}")
             return 0.0
+        
+    async def update_position_ratio(self, symbol: str = 'BTCUSDT'):
+        """포지션 비율 데이터 업데이트"""
+        current_time = int(time())
+        
+        # 업데이트 간격 체크
+        if current_time - self.last_ratio_update < self.ratio_update_interval:
+            return
+            
+        ratios = await self.api.get_position_ratio(symbol)
+        if ratios is not None:
+            self.position_ratio_cache.append((current_time * 1000, ratios))
+            self.last_ratio_update = current_time
+            
+            # 캐시 크기 관리 (1시간치 데이터만 유지)
+            while len(self.position_ratio_cache) > 60:
+                self.position_ratio_cache.pop(0)
+                
+    def calculate_position_ratio_indicators(self) -> Dict[str, float]:
+        """포지션 비율 관련 지표 계산
+        
+        Returns:
+            Dict[str, float]: {
+                'long_ratio': 현재 롱 포지션 비율,
+                'short_ratio': 현재 숏 포지션 비율,
+                'long_short_ratio': 현재 롱숏 비율,
+                'ratio_change_5m': 5분 전 대비 롱숏 비율 변화,
+                'ratio_change_15m': 15분 전 대비 롱숏 비율 변화
+            }
+        """
+        if not self.position_ratio_cache:
+            return {
+                'long_ratio': 0.5,
+                'short_ratio': 0.5,
+                'long_short_ratio': 1.0,
+                'ratio_change_5m': 0.0,
+                'ratio_change_15m': 0.0
+            }
+            
+        current_data = self.position_ratio_cache[-1][1]
+        current_time = self.position_ratio_cache[-1][0]
+        
+        def get_ratio_change(minutes: int) -> float:
+            target_time = current_time - (minutes * 60 * 1000)
+            for timestamp, data in reversed(self.position_ratio_cache[:-1]):
+                if timestamp <= target_time:
+                    return current_data['long_short_ratio'] - data['long_short_ratio']
+            return 0.0
+            
+        return {
+            'long_ratio': current_data['long_ratio'],
+            'short_ratio': current_data['short_ratio'],
+            'long_short_ratio': current_data['long_short_ratio'],
+            'ratio_change_5m': get_ratio_change(5),
+            'ratio_change_15m': get_ratio_change(15)
+        }

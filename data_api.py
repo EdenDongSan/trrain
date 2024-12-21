@@ -326,3 +326,42 @@ class BitgetAPI:
                     logger.debug(f"주문 유지: {order_id}, 경과 시간: {(current_time_ms - order_time)/1000:.1f}초")
                     
         return results
+    
+    async def get_position_ratio(self, symbol: str, period: str = '5m') -> Optional[Dict[str, float]]:
+        """포지션 롱숏 비율 데이터 조회
+        
+        Args:
+            symbol (str): 거래쌍 심볼 (예: 'BTCUSDT')
+            period (str): 기간 (기본값: '5m')
+            
+        Returns:
+            Optional[Dict[str, float]]: {
+                'long_ratio': float,  # 롱 포지션 비율
+                'short_ratio': float,  # 숏 포지션 비율
+                'long_short_ratio': float  # 롱숏 비율
+            }
+        """
+        try:
+            params = {
+                'symbol': symbol,
+                'period': period
+            }
+            
+            response = await self._request('GET', '/api/v2/mix/market/position-long-short', params=params)
+            
+            if response and response.get('code') == '00000':
+                data = response.get('data', [])
+                if data:
+                    latest = data[-1]  # 가장 최근 데이터
+                    return {
+                        'long_ratio': float(latest['longPositionRatio']),
+                        'short_ratio': float(latest['shortPositionRatio']),
+                        'long_short_ratio': float(latest['longShortPositionRatio'])
+                    }
+                    
+            logger.error(f"Failed to get position ratio: {response}")
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error fetching position ratio: {e}")
+            return None
