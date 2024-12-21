@@ -32,8 +32,8 @@ class TradingStrategy:
         
         # 포지션 비율 관련 변수 초기화
         self.entry_position_ratio = 0.0  # 진입 시점의 포지션 비율
-        self.ratio_drop_threshold = 0.2  # 비율 하락 감지 임계값
-        self.ratio_drop_value = 0.0  # 비율 하락으로 인한 청산 시점의 비율
+        self.ratio_drop_threshold = 0.01  # 비율 하락 감지 임계값
+        self.ratio_drop_value = 0.0 # 비율 하락으로 인한 청산 시점의 비율
         self.ratio_drop_direction = None  # 비율 하락이 발생한 포지션 방향
 
     async def calculate_position_size(self, current_price: float) -> float:
@@ -73,8 +73,8 @@ class TradingStrategy:
             else:
                 current_ratio = indicators.get('short_ratio', 0)
                 
-            # 비율이 하락 시점 대비 0.1% 이상 회복되었는지 확인
-            recovered = current_ratio > (self.ratio_drop_value + 0.1)
+            # 비율이 하락 시점 대비 0.01% 이상 회복되었는지 확인
+            recovered = current_ratio >= (self.ratio_drop_value + 0.01)
             
             if recovered:
                 # 회복 확인되면 관련 변수들 초기화
@@ -277,7 +277,7 @@ class TradingStrategy:
             # 포지션 비율 확인
             position_ratios = self.market_data.calculate_position_ratio_indicators()
             
-            # 롱/숏 포지션 비율이 진입 시점 대비 0.2% 이상 하락했는지 확인
+            # 롱/숏 포지션 비율이 진입 시점 대비 0.01% 이상 하락했는지 확인
             if position.side == 'long' and self.entry_position_ratio > 0:
                 current_ratio = float(position_ratios.get('long_ratio', 0))
                 if current_ratio < (self.entry_position_ratio - self.ratio_drop_threshold):

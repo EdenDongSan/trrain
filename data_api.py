@@ -328,7 +328,7 @@ class BitgetAPI:
         return results
     
     async def get_position_ratio(self, symbol: str, period: str = '5m') -> Optional[Dict[str, float]]:
-        """포지션 롱숏 비율 데이터 조회
+        """포지션 롱숏 비율 데이터 조회(어카운트 데이터라,, 값이 한쪽으로 쏠리게 되면 고래진입신호로 해석가능할듯)
         
         Args:
             symbol (str): 거래쌍 심볼 (예: 'BTCUSDT')
@@ -347,16 +347,16 @@ class BitgetAPI:
                 'period': period
             }
             
-            response = await self._request('GET', '/api/v2/mix/market/position-long-short', params=params)
+            response = await self._request('GET', '/api/v2/mix/market/account-long-short', params=params)
             
             if response and response.get('code') == '00000':
                 data = response.get('data', [])
                 if data:
                     latest = data[-1]  # 가장 최근 데이터
                     return {
-                        'long_ratio': float(latest['longPositionRatio']),
-                        'short_ratio': float(latest['shortPositionRatio']),
-                        'long_short_ratio': float(latest['longShortPositionRatio'])
+                        'long_ratio': float(latest['longAccountRatio']),
+                        'short_ratio': float(latest['shortAccountRatio']),
+                        'long_short_ratio': float(latest['longShortAccountRatio'])
                     }
                     
             logger.error(f"Failed to get position ratio: {response}")
