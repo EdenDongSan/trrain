@@ -321,13 +321,13 @@ class TradingStrategy:
             # 포지션 방향에 따른 비율 체크 및 즉시 청산, 락 설정
             if position.side == 'long':
                 ratio_drop = self.long_entry_ratio - current_long_ratio
-                if self.long_entry_ratio > 0 and ratio_drop >= 0.002:
+                if self.long_entry_ratio > 0 and ratio_drop >= 0.003:
                     self.long_ratio_lock = True  # 락 설정
                     logger.info(f"롱 포지션 비율 하락으로 락 설정 및 청산 (진입: {self.long_entry_ratio:.4f}%, 현재: {current_long_ratio:.4f}%, 하락폭: {ratio_drop:.4f}%)")
                     return True, "ratio_drop"
             else:  # short position
                 ratio_drop = self.short_entry_ratio - current_short_ratio
-                if self.short_entry_ratio > 0 and ratio_drop >= 0.002:
+                if self.short_entry_ratio > 0 and ratio_drop >= 0.003:
                     self.short_ratio_lock = True  # 락 설정
                     logger.info(f"숏 포지션 비율 하락으로 락 설정 및 청산 (진입: {self.short_entry_ratio:.4f}%, 현재: {current_short_ratio:.4f}%, 하락폭: {ratio_drop:.4f}%)")
                     return True, "ratio_drop"
@@ -460,6 +460,34 @@ class TradingStrategy:
                 logger.warning("지표가 계산되지 않음")
                 return
                 
+            current_price = indicators.get('last_close')
+            ema200 = indicators.get('ema200')
+            if not (current_price and ema200):
+                return
+
+            # 포지션이 없을 때만 200 EMA 돌파 체크 및 비율 초기화 로직 실행
+            if position is None or position.size == 0:
+                # 200 EMA 돌파 체크
+                price_above_ema = current_price > ema200
+                if price_above_ema != self.last_price_above_ema:  # EMA 돌파 발생
+                    if price_above_ema:  # 상향 돌파
+                        logger.info(f"가격이 200 EMA를 상향 돌파 (가격: {current_price:.2f} > EMA200: {ema200:.2f})")
+                        # 숏 진입 비율 초기화 및 락 해제
+                        if self.short_ratio_lock:
+                            self.short_ratio_lock = False
+                            self.short_entry_ratio = 0.0
+                            logger.info("200 EMA 상향 돌파로 숏 진입 비율 초기화 및 락 해제")
+                    else:  # 하향 돌파
+                        logger.info(f"가격이 200 EMA를 하향 돌파 (가격: {current_price:.2f} < EMA200: {ema200:.2f})")
+                        # 롱 진입 비율 초기화 및 락 해제
+                        if self.long_ratio_lock:
+                            self.long_ratio_lock = False
+                            self.long_entry_ratio = 0.0
+                            logger.info("200 EMA 하향 돌파로 롱 진입 비율 초기화 및 락 해제")
+                self.last_price_above_ema = price_above_ema
+            else:
+                logger.info("포지션 보유 중 - 비율 초기화 로직 스킵")
+
             # 포지션 비율 로깅
             position_ratios = self.market_data.calculate_position_ratio_indicators()
             logger.info(
@@ -469,10 +497,11 @@ class TradingStrategy:
                 f"  롱숏 비율: {position_ratios.get('long_short_ratio', 1):.4f}\n"
                 f"  5분 변화: {position_ratios.get('ratio_change_5m', 0):.4f}\n"
                 f"  롱 진입 비율: {self.long_entry_ratio:.4f}%\n"
-                f"  숏 진입 비율: {self.short_entry_ratio:.4f}%"
+                f"  숏 진입 비율: {self.short_entry_ratio:.4f}%\n"
+                f"  롱 락 상태: {self.long_ratio_lock}\n"
+                f"  숏 락 상태: {self.short_ratio_lock}"
             )
                 
-            current_price = indicators.get('last_close')
             if not current_price:
                 return
                 
