@@ -12,12 +12,12 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingConfig:
-    leverage: int = 30
+    leverage: int = 20
     stop_loss_pct: float = 0.4
     take_profit_pct: float = 1.5
     volume_threshold: float = 20.0
-    stoch_rsi_high: float = 90.0
-    stoch_rsi_low: float = 10.0
+    stoch_rsi_high: float = 5.0
+    stoch_rsi_low: float = 95.0
     position_size_pct: float = 95.0
 
 class TradingStrategy:
@@ -70,40 +70,40 @@ class TradingStrategy:
             position_ratios = self.market_data.calculate_position_ratio_indicators()
             current_long_ratio = float(position_ratios.get('long_ratio', 0))
 
-            # 락이 걸려있고, 현재 비율이 진입 시점 비율 이상으로 회복된 경우
-            if self.long_ratio_lock and current_long_ratio >= self.long_entry_ratio:
-                self.long_ratio_lock = False  # 락 해제만 하고 비율은 유지
-                logger.info(f"롱 비율이 회복됨 ({current_long_ratio:.4f}% >= {self.long_entry_ratio:.4f}%). 락 해제됨")
+            # 락이 걸려있고, 현재 비율이 진입 시점 비율 미만으로 감소한 경우
+            if self.long_ratio_lock and current_long_ratio <= self.long_entry_ratio:
+                self.long_ratio_lock = False  # 락 해제
+                logger.info(f"롱 비율이 감소함 ({current_long_ratio:.4f}% <= {self.long_entry_ratio:.4f}%). 락 해제됨")
 
-            # 이전 진입 시점 비율보다 현재 비율이 0.002% 이상 낮으면 진입 제한
-            if self.long_entry_ratio > 0 and (self.long_entry_ratio - current_long_ratio) >= 0.002:
+            # 이전 진입 시점 비율보다 현재 비율이 0.002% 이상 높으면 진입 제한
+            if self.long_entry_ratio > 0 and (current_long_ratio - self.long_entry_ratio) >= 0.002:
                 self.long_ratio_lock = True
-                logger.info(f"전체 롱 비율이 진입 시점({self.long_entry_ratio:.4f}%)보다 0.002% 이상 낮음({current_long_ratio:.4f}%). 진입 제한")
+                logger.info(f"전체 롱 비율이 진입 시점({self.long_entry_ratio:.4f}%)보다 0.002% 이상 높음({current_long_ratio:.4f}%). 진입 제한")
                 return False
 
-            # 진입 제한 상태 체크
+            # 락 상태 체크
             if self.long_ratio_lock:
                 logger.info("롱 진입 제한 상태")
                 return False
 
-            # 기존 진입 조건들
+            # 나머지 진입 조건들은 동일하게 유지
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
-            stoch_rsi_condition = float(indicators['stoch_k']) < float(self.config.stoch_rsi_low)
-            price_above_ema = float(indicators['last_close']) > float(indicators['ema200'])
+            stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_low)
+            price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
             price_rising = float(indicators['price_change']) > 0
             
             should_enter = (
                 volume_surge and 
                 stoch_rsi_condition and 
-                price_above_ema and 
+                price_below_ema and 
                 price_rising and 
                 not self.in_position
             )
                 
             logger.info(f"Long Entry Conditions:\n"
                     f"  Volume ({indicators['last_volume']:.4f} > {self.config.volume_threshold:.4f}): {volume_surge}\n"
-                    f"  Stoch RSI K ({indicators['stoch_k']:.4f} < {self.config.stoch_rsi_low:.4f}): {stoch_rsi_condition}\n"
-                    f"  Price Above EMA200 ({indicators['last_close']:.4f} > {indicators['ema200']:.4f}): {price_above_ema}\n"
+                    f"  Stoch RSI K ({indicators['stoch_k']:.4f} > {self.config.stoch_rsi_low:.4f}): {stoch_rsi_condition}\n"
+                    f"  Price Below EMA200 ({indicators['last_close']:.4f} < {indicators['ema200']:.4f}): {price_below_ema}\n"
                     f"  Price Rising ({indicators['price_change']:.4f} > 0): {price_rising}\n"
                     f"  Current Long Ratio: {current_long_ratio:.4f}%\n"
                     f"  Entry Long Ratio: {self.long_entry_ratio:.4f}%\n"
@@ -124,38 +124,39 @@ class TradingStrategy:
             position_ratios = self.market_data.calculate_position_ratio_indicators()
             current_short_ratio = float(position_ratios.get('short_ratio', 0))
 
-            # 락이 걸려있고, 현재 비율이 진입 시점 비율 이상으로 회복된 경우
-            if self.short_ratio_lock and current_short_ratio >= self.short_entry_ratio:
+            # 락이 걸려있고, 현재 비율이 진입 시점 비율 미만으로 감소한 경우
+            if self.short_ratio_lock and current_short_ratio <= self.short_entry_ratio:
                 self.short_ratio_lock = False
-                logger.info(f"숏 비율이 회복됨 ({current_short_ratio:.4f}% >= {self.short_entry_ratio:.4f}%). 락 해제됨")
+                logger.info(f"숏 비율이 감소함 ({current_short_ratio:.4f}% <= {self.short_entry_ratio:.4f}%). 락 해제됨")
 
-            # 이전 진입 시점 비율보다 현재 비율이 0.002% 이상 낮으면 진입 제한
-            if self.short_entry_ratio > 0 and (self.short_entry_ratio - current_short_ratio) >= 0.002:
+            # 이전 진입 시점 비율보다 현재 비율이 0.002% 이상 높으면 진입 제한
+            if self.short_entry_ratio > 0 and (current_short_ratio - self.short_entry_ratio) >= 0.002:
                 self.short_ratio_lock = True
-                logger.info(f"전체 숏 비율이 진입 시점({self.short_entry_ratio:.4f}%)보다 0.002% 이상 낮음({current_short_ratio:.4f}%). 진입 제한")
+                logger.info(f"전체 숏 비율이 진입 시점({self.short_entry_ratio:.4f}%)보다 0.002% 이상 높음({current_short_ratio:.4f}%). 진입 제한")
                 return False
 
             if self.short_ratio_lock:
                 logger.info("숏 진입 제한 상태")
                 return False
 
+            # 나머지 진입 조건들은 동일하게 유지
             volume_surge = float(indicators['last_volume']) > float(self.config.volume_threshold)
-            stoch_rsi_condition = float(indicators['stoch_k']) > float(self.config.stoch_rsi_high)
-            price_below_ema = float(indicators['last_close']) < float(indicators['ema200'])
+            stoch_rsi_condition = float(indicators['stoch_k']) < float(self.config.stoch_rsi_high)
+            price_above_ema = float(indicators['last_close']) > float(indicators['ema200'])
             price_falling = float(indicators['price_change']) < 0
 
             should_enter = (
                 volume_surge and 
                 stoch_rsi_condition and 
-                price_below_ema and 
+                price_above_ema and 
                 price_falling and 
                 not self.in_position
             )
 
             logger.info(f"Short Entry Conditions:\n"
                     f"  Volume ({indicators['last_volume']:.4f} > {self.config.volume_threshold:.4f}): {volume_surge}\n"
-                    f"  Stoch RSI K ({indicators['stoch_k']:.4f} > {self.config.stoch_rsi_high:.4f}): {stoch_rsi_condition}\n"
-                    f"  Price Below EMA200 ({indicators['last_close']:.4f} < {indicators['ema200']:.4f}): {price_below_ema}\n"
+                    f"  Stoch RSI K ({indicators['stoch_k']:.4f} < {self.config.stoch_rsi_high:.4f}): {stoch_rsi_condition}\n"
+                    f"  Price Above EMA200 ({indicators['last_close']:.4f} > {indicators['ema200']:.4f}): {price_above_ema}\n"
                     f"  Price Falling ({indicators['price_change']:.4f} < 0): {price_falling}\n"
                     f"  Current Short Ratio: {current_short_ratio:.4f}%\n"
                     f"  Entry Short Ratio: {self.short_entry_ratio:.4f}%\n"
