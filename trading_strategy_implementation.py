@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 
 @dataclass
 class TradingConfig:
-    leverage: int = 20
+    leverage: int = 30
     stop_loss_pct: float = 0.4
     take_profit_pct: float = 1.5
     volume_threshold: float = 20.0
